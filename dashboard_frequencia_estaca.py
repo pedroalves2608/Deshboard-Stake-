@@ -26,7 +26,7 @@ st.markdown(
 # ===========================
 
 BASE_DIR = Path(__file__).resolve().parent
-CSV_PATH = BASE_DIR / "data" / "output" / "frequencia_estaca_2025.csv"  # ajuste o nome/ano se precisar
+CSV_PATH = BASE_DIR / "data" / "output" / "frequencia_estaca_2025.csv"
 
 if not CSV_PATH.exists():
     st.error(
@@ -35,7 +35,6 @@ if not CSV_PATH.exists():
     )
     st.stop()
 
-# Lê o CSV
 df = pd.read_csv(CSV_PATH, encoding="utf-8-sig")
 
 if "Alas" not in df.columns:
@@ -44,7 +43,6 @@ if "Alas" not in df.columns:
 
 df = df.set_index("Alas")
 
-# garante valores numéricos nas colunas de semanas
 for col in df.columns:
     df[col] = pd.to_numeric(df[col], errors="coerce").fillna(0).astype(int)
 
@@ -53,7 +51,6 @@ for col in df.columns:
 # ===========================
 
 def sort_week_cols(cols):
-    """Ordena colunas do tipo '9 nov', '16 nov', '7 dez' em ordem cronológica aproximada."""
     month_map = {
         "jan": 1, "fev": 2, "mar": 3, "abr": 4, "mai": 5, "jun": 6,
         "jul": 7, "ago": 8, "set": 9, "out": 10, "nov": 11, "dez": 12
@@ -73,11 +70,9 @@ def sort_week_cols(cols):
 
     return sorted(cols, key=key)
 
-# ordena colunas (semanas) em ordem cronológica
 weeks = sort_week_cols(df.columns.tolist())
 df = df[weeks]
 
-# adiciona linha TOTAL se ainda não existir
 if "TOTAL" not in df.index:
     df.loc["TOTAL"] = df.sum(axis=0)
 
@@ -104,17 +99,38 @@ start_week, end_week = st.sidebar.select_slider(
     value=(weeks[0], weeks[-1])
 )
 
-# filtrar semanas
 start_idx = weeks.index(start_week)
 end_idx = weeks.index(end_week) + 1
 weeks_sel = weeks[start_idx:end_idx]
 
-# aplica filtros
 df_ala_filt = df_ala.loc[alas_sel, weeks_sel]
 df_total_filt = df.loc["TOTAL", weeks_sel]
 
 st.sidebar.markdown("---")
 st.sidebar.markdown("ℹ️ Dica: use os filtros para investigar quedas, picos e a participação de cada ala.")
+
+# ===========================
+# TIPO DE DOMINGO (QUÓRUM x ESCOLA DOMINICAL)
+# ===========================
+
+LAST_QUORUM_WEEK = "28 dez"
+
+week_type = {}
+is_quorum = True
+
+for week in reversed(weeks):
+    week_type[week] = "Quórum & Classe" if is_quorum else "Escola Dominical"
+    is_quorum = not is_quorum
+
+st.markdown("### 📅 Tipo de Domingo")
+
+cols = st.columns(len(weeks_sel))
+for i, week in enumerate(weeks_sel):
+    tipo = week_type.get(week, "")
+    if tipo == "Quórum & Classe":
+        cols[i].success(f"{week}\nQuórum & Classe")
+    else:
+        cols[i].info(f"{week}\nEscola Dominical")
 
 # ===========================
 # MÉTRICAS GERAIS
@@ -150,7 +166,10 @@ for ala in df_ala_filt.index:
 
 ax1.set_xlabel("Semana")
 ax1.set_ylabel("Frequência")
-ax1.set_title("Frequência por Ala ao Longo das Semanas")
+ax1.set_title(
+    "Frequência por Ala ao Longo das Semanas\n"
+    "Verde = Quórum & Classe | Azul = Escola Dominical"
+)
 ax1.tick_params(axis="x", rotation=45)
 ax1.legend()
 fig1.tight_layout()
