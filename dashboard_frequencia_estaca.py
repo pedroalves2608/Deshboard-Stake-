@@ -1,8 +1,9 @@
 import streamlit as st
 import pandas as pd
 import numpy as np
-import matplotlib.pyplot as plt
 from pathlib import Path
+import plotly.express as px
+import plotly.graph_objects as go
 
 # ===========================
 # CONFIGURAÇÃO BÁSICA
@@ -38,7 +39,7 @@ if not CSV_PATH.exists():
 df = pd.read_csv(CSV_PATH, encoding="utf-8-sig")
 
 if "Alas" not in df.columns:
-    st.error("O CSV não possui a coluna 'Alas'. Verifique o script de processamento.")
+    st.error("O CSV não possui a coluna 'Alas'.")
     st.stop()
 
 df = df.set_index("Alas")
@@ -47,7 +48,7 @@ for col in df.columns:
     df[col] = pd.to_numeric(df[col], errors="coerce").fillna(0).astype(int)
 
 # ===========================
-# FUNÇÃO AUXILIAR PARA ORDENAR SEMANAS
+# ORDENAR SEMANAS
 # ===========================
 
 def sort_week_cols(cols):
@@ -59,14 +60,9 @@ def sort_week_cols(cols):
     def key(label):
         parts = str(label).split()
         if len(parts) != 2:
-            return (99, 99, label)
-        dia_txt, mes_txt = parts
-        try:
-            dia = int(dia_txt)
-        except ValueError:
-            dia = 99
-        mes = month_map.get(mes_txt.lower(), 99)
-        return (mes, dia, label)
+            return (99, 99)
+        dia, mes = parts
+        return (month_map.get(mes.lower(), 99), int(dia))
 
     return sorted(cols, key=key)
 
@@ -78,11 +74,8 @@ if "TOTAL" not in df.index:
 
 df_ala = df.drop("TOTAL")
 
-st.markdown("#### Prévia dos dados carregados do CSV")
-st.dataframe(df)
-
 # ===========================
-# SIDEBAR - CONTROLES
+# SIDEBAR
 # ===========================
 
 st.sidebar.header("⚙️ Filtros")
@@ -99,168 +92,154 @@ start_week, end_week = st.sidebar.select_slider(
     value=(weeks[0], weeks[-1])
 )
 
-start_idx = weeks.index(start_week)
-end_idx = weeks.index(end_week) + 1
-weeks_sel = weeks[start_idx:end_idx]
+weeks_sel = weeks[weeks.index(start_week): weeks.index(end_week) + 1]
 
 df_ala_filt = df_ala.loc[alas_sel, weeks_sel]
 df_total_filt = df.loc["TOTAL", weeks_sel]
 
-st.sidebar.markdown("---")
-st.sidebar.markdown("ℹ️ Dica: use os filtros para investigar quedas, picos e a participação de cada ala.")
-
 # ===========================
-# TIPO DE DOMINGO (QUÓRUM x ESCOLA DOMINICAL)
+# TIPO DE DOMINGO
 # ===========================
-
-LAST_QUORUM_WEEK = "28 dez"
 
 week_type = {}
-is_quorum = True
+is_quorum = True  # 28 dez
 
 for week in reversed(weeks):
     week_type[week] = "Quórum & Classe" if is_quorum else "Escola Dominical"
     is_quorum = not is_quorum
 
 st.markdown("### 📅 Tipo de Domingo")
-
 cols = st.columns(len(weeks_sel))
-for i, week in enumerate(weeks_sel):
-    tipo = week_type.get(week, "")
-    if tipo == "Quórum & Classe":
-        cols[i].success(f"{week}\nQuórum & Classe")
+for i, w in enumerate(weeks_sel):
+    if week_type[w] == "Quórum & Classe":
+        cols[i].success(f"{w}\nQuórum & Classe")
     else:
-        cols[i].info(f"{week}\nEscola Dominical")
+        cols[i].info(f"{w}\nEscola Dominical")
 
 # ===========================
-# MÉTRICAS GERAIS
+# MÉTRICAS
 # ===========================
 
 st.markdown("---")
 st.subheader("📌 Métricas gerais")
 
-col1, col2, col3 = st.columns(3)
+c1, c2, c3 = st.columns(3)
 
-media_geral = df_ala_filt.values.mean()
-col1.metric("Média de frequência (alas filtradas)", f"{media_geral:.1f}")
+c1.metric("Média geral", f"{df_ala_filt.values.mean():.1f}")
+c2.metric("Maior total", int(df_total_filt.max()), df_total_filt.idxmax())
+c3.metric("Menor total", int(df_total_filt.min()), df_total_filt.idxmin())
 
-max_total = df_total_filt.max()
-max_week = df_total_filt.idxmax()
-col2.metric("Maior frequência total da estaca", f"{int(max_total)}", max_week)
-
-min_total = df_total_filt.min()
-min_week = df_total_filt.idxmin()
-col3.metric("Menor frequência total da estaca", f"{int(min_total)}", min_week)
+# ===========================
+# LINHAS (PLOTLY)
+# ===========================
 
 st.markdown("---")
+st.subheader("📈 Frequência por Ala")
 
-# ===========================
-# LINHA - FREQUÊNCIA POR ALA
-# ===========================
-
-st.subheader("📈 Frequência por Ala (Linhas)")
-
-fig1, ax1 = plt.subplots(figsize=(8, 4))
-for ala in df_ala_filt.index:
-    ax1.plot(weeks_sel, df_ala_filt.loc[ala], marker="o", label=ala)
-
-ax1.set_xlabel("Semana")
-ax1.set_ylabel("Frequência")
-ax1.set_title(
-    "Frequência por Ala ao Longo das Semanas\n"
-    "Verde = Quórum & Classe | Azul = Escola Dominical"
+df_long = df_ala_filt.reset_index().melt(
+    id_vars="Alas",
+    var_name="Semana",
+    value_name="Frequência"
 )
-ax1.tick_params(axis="x", rotation=45)
-ax1.legend()
-fig1.tight_layout()
-st.pyplot(fig1)
+
+fig_line = px.line(
+    df_long,
+    x="Semana",
+    y="Frequência",
+    color="Alas",
+    markers=True,
+    title="Frequência por Ala ao Longo das Semanas",
+)
+
+fig_line.update_layout(hovermode="x unified")
+st.plotly_chart(fig_line, use_container_width=True)
 
 # ===========================
-# BARRAS EMPILHADAS - TOTAL
+# BARRAS EMPILHADAS
 # ===========================
 
-st.subheader("📚 Frequência Total Empilhada por Semana")
+st.markdown("---")
+st.subheader("📚 Frequência Total Empilhada")
 
-fig2, ax2 = plt.subplots(figsize=(8, 4))
-bottom = np.zeros(len(weeks_sel))
-for ala in df_ala.index:
-    ax2.bar(weeks_sel, df_ala.loc[ala, weeks_sel], bottom=bottom, label=ala)
-    bottom += df_ala.loc[ala, weeks_sel].values
+fig_bar = go.Figure()
 
-ax2.set_xlabel("Semana")
-ax2.set_ylabel("Frequência")
-ax2.set_title("Frequência Total Empilhada por Semana (Todas as Alas)")
-ax2.tick_params(axis="x", rotation=45)
-ax2.legend()
-fig2.tight_layout()
-st.pyplot(fig2)
+for ala in df_ala_filt.index:
+    fig_bar.add_bar(
+        name=ala,
+        x=weeks_sel,
+        y=df_ala_filt.loc[ala]
+    )
+
+fig_bar.update_layout(
+    barmode="stack",
+    title="Frequência Total Empilhada por Semana",
+    hovermode="x unified"
+)
+
+st.plotly_chart(fig_bar, use_container_width=True)
 
 # ===========================
 # MAPA DE CALOR
 # ===========================
 
-st.subheader("🔥 Mapa de Calor da Frequência por Ala")
+st.markdown("---")
+st.subheader("🔥 Mapa de Calor da Frequência")
 
-fig3, ax3 = plt.subplots(figsize=(8, 4))
-im = ax3.imshow(df_ala.loc[:, weeks_sel].values, aspect="auto")
-ax3.set_yticks(range(len(df_ala.index)))
-ax3.set_yticklabels(df_ala.index)
-ax3.set_xticks(range(len(weeks_sel)))
-ax3.set_xticklabels(weeks_sel, rotation=45)
-ax3.set_title("Mapa de Calor da Frequência")
-cbar = fig3.colorbar(im, ax=ax3)
-cbar.set_label("Frequência")
-fig3.tight_layout()
-st.pyplot(fig3)
+fig_heat = px.imshow(
+    df_ala_filt.values,
+    labels=dict(x="Semana", y="Ala", color="Frequência"),
+    x=weeks_sel,
+    y=df_ala_filt.index,
+    aspect="auto",
+    title="Mapa de Calor da Frequência por Ala"
+)
+
+st.plotly_chart(fig_heat, use_container_width=True)
 
 # ===========================
-# BOXPLOT + ESTATÍSTICAS
+# BOXPLOT
 # ===========================
 
-st.subheader("📦 Distribuição de Frequência por Ala")
+st.markdown("---")
+st.subheader("📦 Distribuição de Frequência")
 
-fig4, ax4 = plt.subplots(figsize=(8, 4))
-data_box = df_ala_filt.T.values
-ax4.boxplot(data_box, labels=df_ala_filt.index)
-ax4.set_ylabel("Frequência")
-ax4.set_title("Distribuição de Frequência (Boxplot) - Alas Filtradas")
-ax4.tick_params(axis="x", rotation=45)
-fig4.tight_layout()
-st.pyplot(fig4)
+fig_box = px.box(
+    df_long,
+    x="Alas",
+    y="Frequência",
+    title="Distribuição de Frequência por Ala"
+)
 
-st.markdown("**Estatísticas por ala (alas filtradas):**")
-stats = df_ala_filt.T.describe().T[["mean", "std", "min", "max"]]
-stats = stats.rename(columns={
-    "mean": "Média",
-    "std": "Desvio Padrão",
-    "min": "Mínimo",
-    "max": "Máximo"
-})
-st.dataframe(stats.style.format("{:.1f}"))
+st.plotly_chart(fig_box, use_container_width=True)
 
 # ===========================
 # PARTICIPAÇÃO PERCENTUAL
 # ===========================
 
-st.subheader("📌 Participação Percentual no Total da Estaca")
+st.markdown("---")
+st.subheader("📌 Participação Percentual no Total")
 
-df_pct = df_ala.loc[:, weeks_sel].div(df.loc["TOTAL", weeks_sel], axis=1) * 100
+df_pct = df_ala_filt.div(df_total_filt, axis=1) * 100
+df_pct_long = df_pct.reset_index().melt(
+    id_vars="Alas",
+    var_name="Semana",
+    value_name="% do total"
+)
 
-fig5, ax5 = plt.subplots(figsize=(8, 4))
-for ala in df_pct.index:
-    ax5.plot(weeks_sel, df_pct.loc[ala], marker="o", label=ala)
+fig_pct = px.line(
+    df_pct_long,
+    x="Semana",
+    y="% do total",
+    color="Alas",
+    markers=True,
+    title="Participação Percentual no Total da Estaca"
+)
 
-ax5.set_xlabel("Semana")
-ax5.set_ylabel("% do total da estaca")
-ax5.set_title("Participação Percentual de Cada Ala no Total Semanal")
-ax5.tick_params(axis="x", rotation=45)
-ax5.legend()
-fig5.tight_layout()
-st.pyplot(fig5)
+fig_pct.update_layout(hovermode="x unified")
+st.plotly_chart(fig_pct, use_container_width=True)
 
 st.markdown("---")
 st.markdown(
-    "💡 **Como usar este dashboard:** "
-    "Use os filtros na barra lateral para investigar alas específicas, períodos de queda ou aumento, "
-    "e compare a participação relativa de cada ala no total da estaca."
+    "💡 Use os filtros para comparar alas, identificar padrões e entender o impacto "
+    "do tipo de domingo (Quórum x Escola Dominical) na frequência."
 )
